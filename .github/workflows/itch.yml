@@ -1,0 +1,36 @@
+name: Publish to itch.io
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'manifest.webmanifest'
+      - 'media/example.jpg'
+      - 'media/icon-*.png'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # itch.io serves over https, so the app also requests these optional files
+      - name: Prepare build folder
+        run: |
+          mkdir -p build/media
+          cp index.html manifest.webmanifest build/
+          cp media/example.jpg media/icon-192.png media/icon-512.png build/media/
+
+      - name: Install butler
+        run: |
+          curl -sSL -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip -q butler.zip
+          chmod +x butler
+          ./butler -V
+
+      - name: Push to itch.io
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: ./butler push build averines/ixpix:html5 --userversion "${GITHUB_SHA::7}"
