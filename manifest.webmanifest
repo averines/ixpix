@@ -1,0 +1,22 @@
+{
+  "name": "ixpix",
+  "short_name": "ixpix",
+  "description": "Turns AI-generated pixel art into true 1:1 pixel art with a transparent background.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c0c0e",
+  "theme_color": "#131316",
+  "icons": [
+    {
+      "src": "media/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "media/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
