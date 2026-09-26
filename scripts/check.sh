@@ -47,8 +47,10 @@ report 'top-level import/export turns the script into a module' \
   '^[[:space:]]*(import|export)[[:space:]]+'
 report 'external script <script src=...>' \
   '<script[^>]*[[:space:]]src[[:space:]]*='
+# rel="canonical" only names the page's address for search engines, nothing loads
 report 'external resource in <link href=...>' \
-  '<link[^>]*href[[:space:]]*=[[:space:]]*.(https?:)?//'
+  '<link[^>]*href[[:space:]]*=[[:space:]]*.(https?:)?//' \
+  'rel="canonical"'
 report 'external resource in @import' \
   '@import[[:space:]]+(url\()?.?(https?:)?//'
 # fetch() only to data: and blob:. A local path from file:// hits CORS and

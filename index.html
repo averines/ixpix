@@ -12,10 +12,16 @@
 <title>ixpix: AI pixel art to true pixel art</title>
 <meta name="description" content="Turns AI-generated pixel art into true 1:1 pixel art with a transparent background, ready for games. Runs in the browser, images never leave your device.">
 <meta name="theme-color" content="#131316">
+<link rel="canonical" href="https://averines.github.io/ixpix/">
+<link rel="apple-touch-icon" href="media/icon-192.png">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="ixpix">
 <meta property="og:title" content="ixpix: AI pixel art to true pixel art">
 <meta property="og:url" content="https://averines.github.io/ixpix/">
 <meta property="og:image" content="https://averines.github.io/ixpix/media/screenshot.png">
+<meta property="og:image:width" content="1600">
+<meta property="og:image:height" content="900">
+<meta property="og:image:alt" content="ixpix interface: an AI-generated pixel art image on the left, the clean transparent sprite on the right">
 <meta name="twitter:card" content="summary_large_image">
 <meta property="og:description" content="Turns AI-generated pixel art into true 1:1 pixel art with a transparent background, ready for games.">
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
@@ -153,7 +159,8 @@
     & .icon-btn svg { width: 14px; height: 14px; }
   }
 
-  .brand { font-weight: 700; letter-spacing: 0.08em; color: var(--text-strong); }
+  .brand { margin: 0; font-size: inherit; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-strong); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .file-name { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .spacer { flex: 1; }
   .info { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -656,7 +663,7 @@
 </head>
 <body>
 <div class="narrow-notice">
-  <span class="brand">IXPIX</span>
+  <span class="brand">ixpix</span>
   <p>ixpix needs a window at least 500 px wide. Widen the window or use a computer.</p>
 </div>
 <div class="app">
@@ -665,7 +672,7 @@
 
   <aside class="panel">
     <header class="panel-head">
-      <span class="brand">IXPIX</span>
+      <h1 class="brand">ixpix<span class="visually-hidden">: turn AI pixel art into true pixel art</span></h1>
       <span class="spacer"></span>
       <button id="toggle-all" class="icon-btn" type="button" title="Collapse all sections" aria-label="Collapse all sections">
         <svg class="icon-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/></svg>
