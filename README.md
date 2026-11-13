@@ -7,7 +7,7 @@ already have.
 
 ![The interface: the AI image on the left, the clean sprite on the right](media/screenshot.png)
 
-**Try it:** https://averines.github.io/ixpix/
+**Try it:** https://averines.itch.io/ixpix
 
 Everything runs in your browser. Images are never uploaded anywhere.
 

@@ -24,51 +24,8 @@ fi
 # cannot see it, they run inside an already loaded page.
 echo "== Launch constraints =="
 
-VIOLATIONS=0
-# report <description> <ERE> [allow ERE]
-# The allow pattern exempts the permitted form of a construct (ERE has no
-# negative lookahead).
-report() {
-  local what="$1" re="$2" allow="${3:-}" hits
-  hits="$(grep -nE "$re" "$FILE" || true)"
-  if [ -n "$allow" ] && [ -n "$hits" ]; then
-    hits="$(printf '%s\n' "$hits" | grep -vE "$allow" || true)"
-  fi
-  if [ -n "$hits" ]; then
-    echo "VIOLATION: $what"
-    printf '%s\n' "$hits" | sed "s#^#  $(basename "$FILE"):#"
-    VIOLATIONS=$((VIOLATIONS + 1))
-  fi
-}
-
-report 'ES module: type="module" is blocked from file://' \
-  '<script[^>]*type[[:space:]]*=[[:space:]]*.module.'
-report 'top-level import/export turns the script into a module' \
-  '^[[:space:]]*(import|export)[[:space:]]+'
-report 'external script <script src=...>' \
-  '<script[^>]*[[:space:]]src[[:space:]]*='
-# rel="canonical" only names the page's address for search engines, nothing loads
-report 'external resource in <link href=...>' \
-  '<link[^>]*href[[:space:]]*=[[:space:]]*.(https?:)?//' \
-  'rel="canonical"'
-report 'external resource in @import' \
-  '@import[[:space:]]+(url\()?.?(https?:)?//'
-# fetch() only to data: and blob:. A local path from file:// hits CORS and
-# fails silently.
-report 'fetch(): only data: and blob: work from file://' \
-  '[^a-zA-Z0-9_.]fetch\(' \
-  "fetch\\([[:space:]]*['\\\"\`](data|blob):"
-# Workers only from a Blob (URL.createObjectURL), not from a .js file.
-report 'new Worker(): workers only from a Blob' \
-  'new[[:space:]]+Worker\(' \
-  'createObjectURL'
-
-if [ "$VIOLATIONS" -eq 0 ]; then
-  echo "OK: no forbidden constructs"
-else
-  echo "Violations: $VIOLATIONS"
-  STATUS=1
-fi
+node "$ROOT/scripts/guard.cjs" "$FILE" || STATUS=1
+node "$ROOT/scripts/guard.test.cjs" || STATUS=1
 
 # ------------------------------------------------------------- types (tsc)
 echo
@@ -108,7 +65,7 @@ fi
 # classic script sharing the app's global scope, so tsc gets both files.
 # --strict is explicit: its default differs between TypeScript versions.
 TESTS_JS="$ROOT/tests/tests.js"
-OUT="$(npx -y -p typescript tsc --allowJs --checkJs --noEmit \
+OUT="$(npx -y -p typescript@7.0.2 tsc --allowJs --checkJs --noEmit \
   --target es2022 --lib es2022,dom,dom.iterable --strict true \
   "$JS" "$TESTS_JS" 2>&1)"
 CODE=$?

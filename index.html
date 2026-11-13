@@ -13,7 +13,6 @@
 <meta name="description" content="Turns AI-generated pixel art into true 1:1 pixel art with a transparent background, ready for games. Runs in the browser, images never leave your device.">
 <meta name="theme-color" content="#131316">
 <link rel="canonical" href="https://averines.github.io/ixpix/">
-<link rel="apple-touch-icon" href="media/icon-192.png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ixpix">
 <meta property="og:title" content="ixpix: AI pixel art to true pixel art">
@@ -1296,7 +1295,7 @@ const CONFIG = Object.freeze({
   CROP_MARKER_PX: 7,
   /** Gap between the crop frame and its toolbar, and toolbar padding from viewer edges, screen px */
   CROP_TOOLBAR_GAP: 10,
-  /** Max side of an exported PNG: browser canvas size limit */
+  /** Conservative side limit for exported PNGs across supported browsers */
   MAX_EXPORT_SIDE: 16384,
   /**
    * Default gap between parts of one sprite, result px.
@@ -2418,14 +2417,17 @@ function floodFillBackground(image, { seeds, tolerance }) {
   // Index of the fill that visited a pixel: a pixel rejected by one point may suit another
   const visited = new Uint16Array(width * height);
   const stack = new Int32Array(width * height);
+  const filledColors = new Set();
 
   seeds.forEach((seed, s) => {
     const sx = Math.floor(seed.x);
     const sy = Math.floor(seed.y);
     if (sx < 0 || sy < 0 || sx >= width || sy >= height) return;
-    // Point inside already removed background: a repeat fill would almost always
-    // cover the same area (four corners of a flat background), the main fill cost
-    if (dst[(sy * width + sx) * 4 + 3] === 0 && src[(sy * width + sx) * 4 + 3] !== 0) return;
+    const seedIndex = (sy * width + sx) * 4;
+    const color = (src[seedIndex] << 16) | (src[seedIndex + 1] << 8) | src[seedIndex + 2];
+    // Only an identical key has the same tolerance region; nearby colors may reach more background.
+    if (dst[seedIndex + 3] === 0 && src[seedIndex + 3] !== 0 && filledColors.has(color)) return;
+    filledColors.add(color);
     const mark = (s % 0xffff) + 1;
     const so = (sy * width + sx) * 3;
     const kL = lab[so];
@@ -5813,6 +5815,37 @@ function showHelp(button, help) {
  */
 const PARAMS_NOT_SAVED = new Set(['crop', 'bgPoints', 'bgKeyColor', 'offsetX', 'offsetY']);
 
+/** @type {Readonly<Record<string, readonly string[]>>} */
+const PARAM_MODES = Object.freeze({
+  bgMode: CONFIG.MODE_VALUES.background,
+  sampleMode: CONFIG.MODE_VALUES.sample,
+  paletteMode: CONFIG.MODE_VALUES.palette,
+  outlineMode: CONFIG.MODE_VALUES.outline,
+  ditherMode: CONFIG.MODE_VALUES.dither,
+  spriteMode: CONFIG.MODE_VALUES.sprite,
+  palettePreset: [...CONFIG.PALETTE_LIBRARY.map((p) => p.id), CONFIG.PALETTE_CUSTOM_ID],
+});
+
+/** Saved numeric settings must obey the same limits as the controls. @type {Readonly<Record<string, readonly [number, number]>>} */
+const PARAM_RANGES = Object.freeze({
+  bgTolerance: [0, CONFIG.BG_TOLERANCE_MAX], bgDefringe: [0, CONFIG.DEFRINGE_MAX], bgShadow: [0, CONFIG.SHADOW_MAX],
+  cellW: [CONFIG.GRID_CELL_MIN, Number.MAX_SAFE_INTEGER], cellH: [CONFIG.GRID_CELL_MIN, Number.MAX_SAFE_INTEGER],
+  sampleMargin: [0, CONFIG.SAMPLE_MARGIN_MAX], cellOpaqueFraction: [0, CONFIG.CELL_OPAQUE_FRACTION_MAX],
+  edgeEnhance: [0, 1], brightness: [-100, 100], contrast: [-100, 100], saturation: [-100, 100],
+  paletteSize: [CONFIG.PALETTE_MIN, CONFIG.PALETTE_MAX], ditherIntensity: [0, 1],
+  trimPadding: [0, CONFIG.TRIM_PADDING_MAX], outlineDarken: [0, 1],
+  spriteGap: [0, CONFIG.SPRITE_GAP_MAX], spriteMinPixels: [1, CONFIG.SPRITE_MIN_PIXELS_MAX],
+  frameColumns: [1, CONFIG.FRAME_GRID_MAX], frameRows: [1, CONFIG.FRAME_GRID_MAX],
+  frameMargin: [0, CONFIG.FRAME_GRID_MARGIN_MAX], atlasColumns: [0, CONFIG.ATLAS_COLUMNS_MAX],
+  animFps: [CONFIG.ANIM_FPS_MIN, CONFIG.ANIM_FPS_MAX],
+});
+
+/** @param {unknown} value @returns {value is RGB} */
+function isRgb(value) {
+  return Array.isArray(value) && value.length === 3
+    && value.every((v) => Number.isInteger(v) && v >= 0 && v <= 255);
+}
+
 /**
  * The part of settings worth saving.
  * @param {Params} params
@@ -5839,16 +5872,21 @@ function sanitizeParams(saved) {
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return out;
   const defaults = /** @type {Record<string, unknown>} */ (CONFIG.DEFAULT_PARAMS);
   for (const [key, value] of Object.entries(saved)) {
-    if (!(key in defaults) || PARAMS_NOT_SAVED.has(key)) continue;
+    if (!Object.hasOwn(defaults, key) || PARAMS_NOT_SAVED.has(key)) continue;
     const fallback = defaults[key];
-    // The only saved param with a null default is the custom palette
-    if (fallback === null) {
-      if (value === null || Array.isArray(value)) out[key] = value;
+    if (key === 'customPalette' || key === 'outlineColor') {
+      if (value === null || (key === 'outlineColor' ? isRgb(value)
+        : Array.isArray(value) && value.length <= CONFIG.PALETTE_MAX && value.every(isRgb))) out[key] = value;
       continue;
     }
     if (value === null || typeof value !== typeof fallback) continue;
     if (Array.isArray(value) !== Array.isArray(fallback)) continue;
     if (typeof value === 'number' && !Number.isFinite(value)) continue;
+    const modes = PARAM_MODES[key];
+    if (modes && (typeof value !== 'string' || !modes.includes(value))) continue;
+    const range = PARAM_RANGES[key];
+    if (range && (typeof value !== 'number' || value < range[0] || value > range[1])) continue;
+    if (key === 'outlineConnectivity' && value !== 4 && value !== 8) continue;
     out[key] = value;
   }
   return out;
@@ -5893,12 +5931,15 @@ function loadPresets() {
 
 /**
  * @param {{name: string, params: Record<string, unknown>}[]} list
+ * @returns {boolean}
  */
 function savePresets(list) {
   try {
     localStorage.setItem(CONFIG.PRESETS_STORAGE_KEY, JSON.stringify(list));
+    return true;
   } catch {
     showMessage('Could not save presets: browser storage is blocked', true);
+    return false;
   }
 }
 
@@ -5965,6 +6006,7 @@ function bindSectionToggles() {
       toggle();
     });
     title.addEventListener('keydown', (e) => {
+      if (e.target !== title) return;
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
       toggle();
@@ -6473,9 +6515,10 @@ function updateExportButtons() {
   const scale = state.resultScale;
   const btnNx = /** @type {HTMLButtonElement} */ (byId('btn-export-nx'));
   btnNx.textContent = `PNG ${scale}x`;
-  /** @type {HTMLButtonElement} */ (byId('btn-export-1x')).disabled = !result;
+  /** @type {HTMLButtonElement} */ (byId('btn-export-1x')).disabled = !result
+    || !canExportSize(result.width, result.height, 1);
   btnNx.disabled = !result || scale === 1
-    || Math.max(result.width, result.height) * scale > CONFIG.MAX_EXPORT_SIDE;
+    || !canExportSize(result.width, result.height, scale);
   btnNx.title = result && btnNx.disabled && scale > 1
     ? `Over ${CONFIG.MAX_EXPORT_SIDE} px per side: lower the pixel scale`
     : 'Download the result at the pixel scale (Shift+E)';
@@ -6501,19 +6544,21 @@ function updateSpriteExportButtons() {
   const btn1x = /** @type {HTMLButtonElement} */ (byId('btn-export-sprites-1x'));
   const btnNx = /** @type {HTMLButtonElement} */ (byId('btn-export-sprites-nx'));
   btnNx.textContent = `Sprites ${scale}x`;
-  btn1x.disabled = isSpritesExportBusy;
-  btnNx.disabled = isSpritesExportBusy || scale === 1;
+  const sprites = activeSprites();
+  btn1x.disabled = isSpritesExportBusy || sprites.some((s) => !canExportSize(s.w, s.h, 1));
+  btnNx.disabled = isSpritesExportBusy || scale === 1 || sprites.some((s) => !canExportSize(s.w, s.h, scale));
 
   const atlas = count > 0 ? currentAtlas() : null;
   byId('export-atlas-row').hidden = !atlas;
   const atlasNx = /** @type {HTMLButtonElement} */ (byId('btn-export-atlas-nx'));
   atlasNx.textContent = `Atlas ${scale}x`;
-  /** @type {HTMLButtonElement} */ (byId('btn-export-atlas-1x')).disabled = isSpritesExportBusy;
+  const isAtlasTooLarge = !!atlas && !canExportSize(atlas.image.width, atlas.image.height, 1);
+  /** @type {HTMLButtonElement} */ (byId('btn-export-atlas-1x')).disabled = isSpritesExportBusy || isAtlasTooLarge;
   atlasNx.disabled = isSpritesExportBusy || scale === 1
-    || Math.max(atlas?.image.width ?? 0, atlas?.image.height ?? 0) * scale > CONFIG.MAX_EXPORT_SIDE;
+    || (!!atlas && !canExportSize(atlas.image.width, atlas.image.height, scale));
   const jsonNx = /** @type {HTMLButtonElement} */ (byId('btn-export-atlas-json-nx'));
   jsonNx.textContent = `JSON ${scale}x`;
-  /** @type {HTMLButtonElement} */ (byId('btn-export-atlas-json-1x')).disabled = isSpritesExportBusy;
+  /** @type {HTMLButtonElement} */ (byId('btn-export-atlas-json-1x')).disabled = isSpritesExportBusy || isAtlasTooLarge;
   jsonNx.disabled = atlasNx.disabled;
   byId('atlas-info').textContent = atlas
     ? `Frame ${atlas.frameW} × ${atlas.frameH} px, grid ${atlas.columns} × ${atlas.rows}`
@@ -6527,13 +6572,23 @@ function updateSpriteExportButtons() {
 async function exportResult(scale) {
   const result = state.result;
   if (!result) return;
+  if (!canExportSize(result.width, result.height, scale)) {
+    showMessage(`Over ${CONFIG.MAX_EXPORT_SIDE} px per side: lower the pixel scale`, true);
+    return;
+  }
+  const name = exportFileName(state.fileName, result.width, result.height, scale);
   const image = scale === 1 ? result : scaleNearest(result, scale);
   const blob = await imageToPngBlob(image);
   if (!blob) {
     showMessage('Could not encode PNG', true);
     return;
   }
-  downloadBlob(blob, exportFileName(state.fileName, result.width, result.height, scale));
+  downloadBlob(blob, name);
+}
+
+/** @param {number} width @param {number} height @param {number} scale */
+function canExportSize(width, height, scale) {
+  return Number.isInteger(scale) && scale >= 1 && Math.max(width, height) * scale <= CONFIG.MAX_EXPORT_SIDE;
 }
 
 /**
@@ -6556,6 +6611,8 @@ async function exportSprites(scale) {
   const result = state.result;
   const sprites = activeSprites();
   if (!result || sprites.length === 0) return;
+  if (isSpritesExportBusy || sprites.some((s) => !canExportSize(s.w, s.h, scale))) return;
+  const fileName = state.fileName;
   setSpritesExportBusy(true);
   try {
     for (let i = 0; i < sprites.length; i++) {
@@ -6566,7 +6623,7 @@ async function exportSprites(scale) {
         showMessage(`Could not encode sprite ${i + 1}`, true);
         return;
       }
-      downloadBlob(blob, spriteFileName(state.fileName, i, sprites.length, scale));
+      downloadBlob(blob, spriteFileName(fileName, i, sprites.length, scale));
       if (i < sprites.length - 1) await new Promise((r) => setTimeout(r, CONFIG.SPRITE_EXPORT_DELAY_MS));
     }
     showMessage(`Sprites saved: ${sprites.length}`);
@@ -6595,13 +6652,15 @@ function currentAtlas() {
 async function exportAtlas(scale) {
   const atlas = currentAtlas();
   if (!atlas) return;
+  if (!canExportSize(atlas.image.width, atlas.image.height, scale)) return;
+  const name = atlasFileName(state.fileName, atlas, scale);
   const image = scale === 1 ? atlas.image : scaleNearest(atlas.image, scale);
   const blob = await imageToPngBlob(image);
   if (!blob) {
     showMessage('Could not encode atlas', true);
     return;
   }
-  downloadBlob(blob, atlasFileName(state.fileName, atlas, scale));
+  downloadBlob(blob, name);
 }
 
 /**
@@ -6612,6 +6671,7 @@ async function exportAtlas(scale) {
 function exportAtlasJson(scale) {
   const atlas = currentAtlas();
   if (!atlas) return;
+  if (!canExportSize(atlas.image.width, atlas.image.height, scale)) return;
   const meta = atlasMetadata(atlas, { sourceName: state.fileName, scale });
   const blob = new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' });
   downloadBlob(blob, atlasJsonFileName(state.fileName, scale));
@@ -6734,9 +6794,10 @@ async function decodeImageFile(file) {
   }
 }
 
-/**
- * @param {File | null | undefined} file
- */
+/** Invalidates decodes when another image is selected or the current one is closed. */
+let imageLoadRequest = 0;
+
+/** @param {File | null | undefined} file */
 async function loadFile(file) {
   if (!file) return;
   if (isPaletteFile(file.name)) {
@@ -6747,9 +6808,13 @@ async function loadFile(file) {
     showMessage(`Not an image: ${file.name}`, true);
     return;
   }
+  const request = ++imageLoadRequest;
   try {
-    setSource(await decodeImageFile(file), file.name || 'clipboard.png');
+    const image = await decodeImageFile(file);
+    if (request !== imageLoadRequest) return;
+    setSource(image, file.name || 'clipboard.png');
   } catch (err) {
+    if (request !== imageLoadRequest) return;
     showMessage(`Could not open ${file.name}: ${err instanceof Error ? err.message : err}`, true);
   }
 }
@@ -6760,12 +6825,16 @@ async function loadFile(file) {
  * separate file, and from file:// its pixels would be unreadable (tainted canvas).
  */
 async function loadSample() {
+  const request = ++imageLoadRequest;
   const img = new Image();
   img.src = CONFIG.SAMPLE_URL;
   try {
     await img.decode();
-    setSource(await decodeImageFile(img), CONFIG.SAMPLE_URL.split('/').pop() ?? 'example.jpg');
+    const image = await decodeImageFile(img);
+    if (request !== imageLoadRequest) return;
+    setSource(image, CONFIG.SAMPLE_URL.split('/').pop() ?? 'example.jpg');
   } catch {
+    if (request !== imageLoadRequest) return;
     showMessage('Could not load the sample image', true);
     return;
   }
@@ -6814,6 +6883,8 @@ async function loadPaletteFile(file) {
  * @param {string} fileName
  */
 function setSource(image, fileName) {
+  imageLoadRequest++;
+  state.excludedSprites.clear();
   state.source = image;
   state.fileName = fileName;
   byId('file-name').textContent = fileName;
@@ -6824,7 +6895,7 @@ function setSource(image, fileName) {
   /** @type {HTMLButtonElement} */ (byId('btn-fit-source')).disabled = false;
   sourceViewer.setImage(image);
   // Crop, key color and points belonged to the previous image
-  setParams({ crop: null, bgKeyColor: null, bgPoints: [] });
+  setParams({ crop: null, bgKeyColor: null, bgPoints: [], offsetX: 0, offsetY: 0 });
   setCropMode(false);
   setPickMode(false);
   syncBackgroundControls();
@@ -6842,6 +6913,7 @@ function setSource(image, fileName) {
  * page reload; the Reset button in Presets resets them.
  */
 function clearSource() {
+  imageLoadRequest++;
   stopAnimation();
   state.source = null;
   state.result = null;
@@ -7089,8 +7161,9 @@ function drawGridOverlay(ctx, viewer) {
   const alpha = CONFIG.GRID_OVERLAY_ALPHA_MIN + t * (CONFIG.GRID_OVERLAY_ALPHA_MAX - CONFIG.GRID_OVERLAY_ALPHA_MIN);
 
   // Snapped lines are uneven, so take them from the pipeline cache
-  const lines = state.params.isGridRefined && maskLayer.source
-    ? gridLinesFor(maskLayer.source, grid, true)
+  const gridSource = state.outputs?.sharpen;
+  const lines = state.params.isGridRefined && gridSource
+    ? gridLinesFor(gridSource, grid, true)
     : null;
 
   ctx.beginPath();
@@ -7640,16 +7713,18 @@ function bindPresetControls() {
     // prompt, not a panel field: names are rarely asked, panel space is costly
     const name = (prompt('Preset name', select.value || 'My preset') ?? '').trim();
     if (!name) return;
-    presets = upsertPreset(presets, name, savedParams(state.params));
-    savePresets(presets);
+    const next = upsertPreset(presets, name, savedParams(state.params));
+    if (!savePresets(next)) return;
+    presets = next;
     syncPresetList(name);
     showMessage(`Preset “${name}” saved`);
   });
 
   byId('preset-delete').addEventListener('click', () => {
     if (!select.value) return;
-    presets = removePreset(presets, select.value);
-    savePresets(presets);
+    const next = removePreset(presets, select.value);
+    if (!savePresets(next)) return;
+    presets = next;
     syncPresetList();
   });
 
@@ -8846,6 +8921,37 @@ function setSegmentActive(btn, isActive) {
   btn.setAttribute('role', 'radio');
   btn.setAttribute('aria-checked', String(isActive));
   btn.classList.toggle('active', isActive);
+  const group = btn.closest('[role="radiogroup"]');
+  if (group) syncSegmentTabStops(group);
+}
+
+/** @param {Element} group */
+function syncSegmentTabStops(group) {
+  const buttons = [...group.querySelectorAll('button')];
+  const enabled = buttons.filter((b) => !b.disabled);
+  const selected = enabled.find((b) => b.getAttribute('aria-checked') === 'true') ?? enabled[0];
+  for (const b of buttons) b.tabIndex = b === selected ? 0 : -1;
+}
+
+function bindSegmentKeys() {
+  document.addEventListener('keydown', (e) => {
+    if (!(e.target instanceof HTMLElement)) return;
+    const button = e.target.closest('button[role="radio"]');
+    const group = button?.closest('[role="radiogroup"]');
+    if (!button || !group) return;
+    const buttons = [...group.querySelectorAll('button')].filter((b) => !b.disabled);
+    const index = buttons.indexOf(/** @type {HTMLButtonElement} */ (button));
+    if (index < 0) return;
+    let next;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (index + 1) % buttons.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (index + buttons.length - 1) % buttons.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = buttons.length - 1;
+    else return;
+    e.preventDefault();
+    buttons[next].focus();
+    buttons[next].click();
+  });
 }
 
 /**
@@ -9139,6 +9245,7 @@ function initApp() {
   bindHelpButtons();
   bindSectionToggles();
   bindFileInputs();
+  bindSegmentKeys();
   // History starts from the restored settings, otherwise the first edit would push an empty entry
   resetHistory();
 }
@@ -9152,6 +9259,10 @@ if (location.protocol.startsWith('http')) {
   manifest.rel = 'manifest';
   manifest.href = 'manifest.webmanifest';
   document.head.append(manifest);
+  const touchIcon = document.createElement('link');
+  touchIcon.rel = 'apple-touch-icon';
+  touchIcon.href = 'media/icon-192.png';
+  document.head.append(touchIcon);
 }
 window.addEventListener('hashchange', () => location.reload());
 if (location.hash === '#test') {

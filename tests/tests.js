@@ -2629,4 +2629,203 @@ test('runPipelineWith: a cached result is the same object', () => {
   assert(first !== src, 'the stage must return a new object');
 });
 
+// UI tests use the real controls without reading or writing the user's settings.
+const uiHooks = /** @type {{decodeImageFile: typeof decodeImageFile, imageToPngBlob: typeof imageToPngBlob, downloadBlob: typeof downloadBlob}} */
+  (/** @type {unknown} */ (window));
+
+/** @param {() => void | Promise<void>} fn */
+async function withTestUI(fn) {
+  const getItem = Storage.prototype.getItem;
+  const setItem = Storage.prototype.setItem;
+  Storage.prototype.getItem = () => null;
+  Storage.prototype.setItem = () => {};
+  try {
+    if (!sourceViewer) initApp();
+    clearSource();
+    Object.assign(state.params, CONFIG.DEFAULT_PARAMS);
+    syncAllControls();
+    await fn();
+  } finally {
+    clearSource();
+    clearTimeout(recomputeTimer);
+    clearTimeout(saveParamsTimer);
+    clearTimeout(historyTimer);
+    Storage.prototype.getItem = getItem;
+    Storage.prototype.setItem = setItem;
+  }
+}
+
+test('UI: replacing an image clears sprite exclusions and grid offsets', () => withTestUI(() => {
+  const image = new ImageData(4, 2);
+  image.data.fill(255);
+  Object.assign(state.params, { isSpritesShown: true, spriteMode: 'grid', frameColumns: 2, frameRows: 1 });
+  setSource(image, 'first.png');
+  toggleSpriteAt({ x: 0, y: 0 });
+  assertEqual(activeSprites().length, 1);
+  state.params.offsetX = 0.5;
+  setSource(image, 'second.png');
+  assertEqual(activeSprites().length, 2, 'all new sprites are included');
+  assertEqual(state.params.offsetX, 0, 'offset belongs to the previous image');
+}));
+
+test('UI: closing an image cancels a pending decode', () => withTestUI(async () => {
+  const decode = decodeImageFile;
+  /** @type {(image: ImageData) => void} */
+  let finish = () => {};
+  uiHooks.decodeImageFile = () => new Promise((resolve) => { finish = resolve; });
+  try {
+    const pending = loadFile(new File(['pending'], 'pending.png', { type: 'image/png' }));
+    clearSource();
+    finish(new ImageData(2, 2));
+    await pending;
+    assertEqual(state.source, null, 'late decode must not reopen a closed image');
+  } finally {
+    uiHooks.decodeImageFile = decode;
+  }
+}));
+
+test('UI: the latest image selection wins when decodes finish out of order', () => withTestUI(async () => {
+  const decode = decodeImageFile;
+  /** @type {((image: ImageData) => void)[]} */
+  const pendingDecodes = [];
+  uiHooks.decodeImageFile = () => new Promise((resolve) => pendingDecodes.push(resolve));
+  try {
+    const first = loadFile(new File(['a'], 'first.png', { type: 'image/png' }));
+    const second = loadFile(new File(['b'], 'second.png', { type: 'image/png' }));
+    pendingDecodes[1](new ImageData(2, 2));
+    await second;
+    pendingDecodes[0](new ImageData(2, 2));
+    await first;
+    assertEqual(state.fileName, 'second.png');
+  } finally {
+    uiHooks.decodeImageFile = decode;
+  }
+}));
+
+test('UI: keyboard export rejects a size above the button limit', () => withTestUI(async () => {
+  setSource(new ImageData(1025, 1), 'wide.png');
+  setResultScale(16);
+  assert(/** @type {HTMLButtonElement} */ (byId('btn-export-nx')).disabled);
+  const encode = imageToPngBlob;
+  let encodes = 0;
+  uiHooks.imageToPngBlob = async () => { encodes++; return null; };
+  try {
+    handleHotkey(new KeyboardEvent('keydown', { code: 'KeyE', shiftKey: true }));
+    await Promise.resolve();
+    assertEqual(encodes, 0, 'reject before scaling or encoding');
+  } finally {
+    uiHooks.imageToPngBlob = encode;
+  }
+}));
+
+test('UI: PNG export keeps its original source filename during encoding', () => withTestUI(async () => {
+  setSource(new ImageData(2, 2), 'first.png');
+  const encode = imageToPngBlob;
+  const download = downloadBlob;
+  /** @type {(blob: Blob) => void} */
+  let finish = () => {};
+  let name = '';
+  uiHooks.imageToPngBlob = () => new Promise((resolve) => { finish = resolve; });
+  uiHooks.downloadBlob = (_blob, fileName) => { name = fileName; };
+  try {
+    const pending = exportResult(1);
+    setSource(new ImageData(3, 3), 'second.png');
+    finish(new Blob(['png']));
+    await pending;
+    assertEqual(name, 'first_2x2.png');
+  } finally {
+    uiHooks.imageToPngBlob = encode;
+    uiHooks.downloadBlob = download;
+  }
+}));
+
+test('UI: a failed preset write is not reported or retained as saved', () => withTestUI(() => {
+  const prompt = window.prompt;
+  const originalPresets = presets;
+  const setItem = Storage.prototype.setItem;
+  window.prompt = () => 'blocked';
+  Storage.prototype.setItem = () => { throw new DOMException('Full', 'QuotaExceededError'); };
+  try {
+    byId('preset-save').click();
+    assert(byId('status-msg').classList.contains('is-error'), 'storage failure stays visible');
+    assert(!presets.some((p) => p.name === 'blocked'), 'failed write does not change the list');
+  } finally {
+    window.prompt = prompt;
+    Storage.prototype.setItem = setItem;
+    presets = originalPresets;
+    syncPresetList();
+  }
+}));
+
+test('UI: Enter on Help does not toggle the containing section', () => withTestUI(() => {
+  const button = must(document.querySelector('.help-btn'));
+  const title = must(button.closest('.section-title'));
+  const before = title.getAttribute('aria-expanded');
+  const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  button.dispatchEvent(event);
+  assertEqual(title.getAttribute('aria-expanded'), before);
+  assert(!event.defaultPrevented, 'native button activation must remain available');
+}));
+
+test('UI: radio groups use arrow selection and a single Tab stop', () => withTestUI(() => {
+  const group = byId('result-scale');
+  setResultScale(4);
+  const selected = must(group.querySelector('[aria-checked="true"]'));
+  selected.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+  assertEqual(state.resultScale, 8);
+  assertEqual(group.querySelectorAll('button[tabindex="0"]').length, 1);
+  assertEqual(must(group.querySelector('button[tabindex="0"]')).textContent, '8x');
+}));
+
+test('sanitizeParams: invalid modes, colors and numeric ranges cannot reach processing', () => {
+  assertEqual(sanitizeParams({ bgMode: 'obsolete', sampleMode: 'invalid' }), {});
+  assertEqual(sanitizeParams({ customPalette: [null], outlineColor: [1, 2] }), {});
+  assertEqual(sanitizeParams({ customPalette: [[256, 0, 0]], outlineConnectivity: 6 }), {});
+  assertEqual(sanitizeParams({ paletteSize: -1, frameColumns: 1e12, trimPadding: -1 }), {});
+  assertEqual(sanitizeParams({ outlineColor: [1, 2, 3] }), { outlineColor: [1, 2, 3] });
+});
+
+test('floodFillBackground: a removed seed still contributes its own background color', () => {
+  const image = new ImageData(5, 5);
+  for (let i = 0; i < image.data.length; i += 4) image.data.set([245, 245, 245, 255], i);
+  image.data.set([255, 255, 255, 255], 0);
+  image.data.set([235, 235, 235, 255], (2 * 5 + 2) * 4);
+  const seeds = cornerPoints(5, 5);
+  const forward = floodFillBackground(image, { seeds, tolerance: 5 });
+  const reverse = floodFillBackground(image, { seeds: [...seeds].reverse(), tolerance: 5 });
+  assertEqual(forward.data[(2 * 5 + 2) * 4 + 3], 0, 'the second seed matches the center');
+  assertEqual([...forward.data], [...reverse.data], 'seed order does not change the mask');
+});
+
+test('UI: refined grid overlay follows the sharpened processing grid', () => withTestUI(() => {
+  const image = boxBlur(renderPseudoPixelArt(makeSyntheticArt({ width: 16, height: 16 }), { cellW: 3.4 }), 1);
+  Object.assign(state.params, { cellW: 3.4, cellH: 3.4, isGridRefined: true, edgeEnhance: 1 });
+  setSource(image, 'grid.png');
+  const viewport = sourceViewer.viewport;
+  const zoom = sourceViewer.zoom;
+  const panX = sourceViewer.panX;
+  const panY = sourceViewer.panY;
+  Object.defineProperty(viewport, 'clientWidth', { value: 600, configurable: true });
+  Object.defineProperty(viewport, 'clientHeight', { value: 600, configurable: true });
+  sourceViewer.zoom = 4;
+  sourceViewer.panX = sourceViewer.panY = 0;
+  /** @type {number[]} */
+  const starts = [];
+  const context = /** @type {CanvasRenderingContext2D} */ (/** @type {unknown} */ ({
+    beginPath() {}, moveTo(/** @type {number} */ x) { starts.push(x); }, lineTo() {}, stroke() {},
+  }));
+  try {
+    const grid = currentGrid();
+    const expected = gridLinesFor(must(state.outputs).sharpen, grid, true).x;
+    drawGridOverlay(context, sourceViewer);
+    assertEqual(starts.slice(0, expected.length), [...expected].map((x) => Math.round(x * 4) + 0.5));
+  } finally {
+    Reflect.deleteProperty(viewport, 'clientWidth');
+    Reflect.deleteProperty(viewport, 'clientHeight');
+    sourceViewer.zoom = zoom;
+    sourceViewer.panX = panX;
+    sourceViewer.panY = panY;
+  }
+}));
+
 runTests();
