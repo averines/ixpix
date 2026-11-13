@@ -59,16 +59,22 @@ function codeOnly(text) {
       } else if (ch === '"' || ch === "'" || ch === '`') {
         quoted(ch);
         canStartRegex = false;
+      } else if (text.startsWith('++', pos) || text.startsWith('--', pos)) {
+        // Prefix keeps the operand position; postfix keeps the completed expression.
+        pos += 2;
       } else if (ch === '/' && canStartRegex) {
         pos++;
         let inClass = false;
-        while (pos < text.length) {
+        let closed = false;
+        while (pos < text.length && text[pos] !== '\n' && text[pos] !== '\r') {
           const c = text[pos++];
           if (c === '\\') pos++;
           else if (c === '[') inClass = true;
           else if (c === ']') inClass = false;
-          else if (c === '/' && !inClass) break;
+          else if (c === '/' && !inClass) { closed = true; break; }
         }
+        // An uncertain slash must not hide the remaining executable code.
+        if (!closed) { pos = start + 1; canStartRegex = true; continue; }
         while (pos < text.length && /[a-z]/i.test(text[pos])) pos++;
         erase(start, pos);
         canStartRegex = false;
