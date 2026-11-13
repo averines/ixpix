@@ -874,11 +874,80 @@ test('removeShadows: gray shadow on the background goes, the object and a shadow
   assert(removeShadows(img, { tolerance: 0, maxChroma: 10 }) === img, '0 returns the source');
 });
 
+test('removeShadows: every neighboring background lightness can accept a shadow', () => {
+  for (const values of [[0, 220, 255], [255, 220, 0]]) {
+    const image = new ImageData(3, 1);
+    values.forEach((v, i) => image.data.set([v, v, v, i === 1 ? 255 : 0], i * 4));
+    const result = removeShadows(image, { tolerance: 15, maxChroma: 10 });
+    assertEqual(result.data[7], 0, 'white background reaches the gray pixel in either orientation');
+    assertEqual(image.data[7], 255, 'source is unchanged');
+  }
+});
+
+test('removeShadows: a later origin can cross a pixel accepted by an earlier origin', () => {
+  const image = new ImageData(3, 2);
+  image.data.set([
+    160, 160, 160, 0, 200, 200, 200, 255, 220, 220, 220, 255,
+    255, 0, 0, 255, 240, 240, 240, 0, 255, 0, 0, 255,
+  ]);
+  const result = removeShadows(image, { tolerance: 15, maxChroma: 10 });
+  assertEqual(result.data[11], 0, 'origin 240 crosses gray 200 and reaches gray 220');
+  assertEqual(result.data[15], 255, 'colored pixels stay opaque');
+});
+
 test('removeShadows: colored and too dark pixels are not shadows', () => {
   const img = imageFromRows(['ttttt', 'tcDdt', 'ttttt'], SHADOW_LEGEND);
   // ΔL to the white background: d ~ 17, D ~ 38, c as bright as d but saturated
   assertEqual(alphaRows(removeShadows(img, { tolerance: 20, maxChroma: 10 })), ['.....', '.##..', '.....'], 'only d goes');
   assertEqual(alphaRows(removeShadows(img, { tolerance: 45, maxChroma: 10 })), ['.....', '.#...', '.....'], 'larger tolerance removes D too');
+});
+
+test('removeShadows: optimized waves equal independent fixed-origin searches', () => {
+  const rng = createRng(9417);
+  const levels = [0, 80, 160, 190, 200, 220, 240, 255];
+  for (let trial = 0; trial < 64; trial++) {
+    const width = 8, height = 6;
+    const image = new ImageData(width, height);
+    for (let q = 0; q < width * height; q++) {
+      const v = levels[Math.floor(rng() * levels.length)];
+      image.data.set(rng() < 0.1 ? [255, 0, 0, 255] : [v, v, v, rng() < 0.2 ? 0 : 255], q * 4);
+    }
+    const lab = imageToLab(image);
+    const expected = new Uint8ClampedArray(image.data);
+    const tolerance = [5, 15, 30, 50][trial % 4];
+    for (let origin = 0; origin < width * height; origin++) {
+      if (image.data[origin * 4 + 3] >= CONFIG.ALPHA_OPAQUE_MIN) continue;
+      const seen = new Set([origin]);
+      const queue = [origin];
+      for (let head = 0; head < queue.length; head++) {
+        const p = queue[head], x = p % width;
+        const neighbors = [x ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p >= width ? p - width : -1, p < width * (height - 1) ? p + width : -1];
+        for (const q of neighbors) {
+          if (q < 0 || seen.has(q)) continue;
+          seen.add(q);
+          const o = q * 3;
+          if (image.data[q * 4 + 3] < CONFIG.ALPHA_OPAQUE_MIN || lab[o + 1] ** 2 + lab[o + 2] ** 2 > 100
+            || Math.abs(lab[o] - lab[origin * 3]) > tolerance) continue;
+          expected[q * 4 + 3] = 0;
+          queue.push(q);
+        }
+      }
+    }
+    assertEqual([...removeShadows(image, { tolerance, maxChroma: 10 }).data], [...expected], `trial ${trial}`);
+  }
+});
+
+test('removeShadows: many independent background origins all propagate', () => {
+  const image = new ImageData(3, 70);
+  for (let y = 0; y < 70; y++) {
+    const v = y * 3;
+    image.data.set([v, v, v, 0, v + 10, v + 10, v + 10, 255, 255, 0, 0, 255], y * 12);
+  }
+  const result = removeShadows(image, { tolerance: 30, maxChroma: 10 });
+  for (let y = 0; y < 70; y++) {
+    assertEqual(result.data[y * 12 + 7], 0, `shadow at origin ${y}`);
+    assertEqual(result.data[y * 12 + 11], 255, 'colored object remains');
+  }
 });
 
 test('pipeline: shadows as a separate step before Defringe', () => {

@@ -2515,12 +2515,43 @@ function backgroundSeeds(width, height, { points, isCornersUsed, origin }) {
 }
 
 /**
+ * Groups boundary seeds by their fixed background lightness. O(pixels).
+ * @param {ImageData} image
+ * @param {Float32Array} lab
+ * @param {Uint8Array} neutral
+ * @param {number} tolerance
+ * @returns {Map<number, number[]>}
+ */
+function shadowBoundarySeeds(image, lab, neutral, tolerance) {
+  const { width, height, data } = image;
+  /** @type {Map<number, number[]>} */
+  const starts = new Map();
+  /** @param {number} q @param {number} L */
+  const start = (q, L) => {
+    if (!neutral[q] || Math.abs(lab[q * 3] - L) > tolerance) return;
+    const seeds = starts.get(L);
+    if (seeds) seeds.push(q);
+    else starts.set(L, [q]);
+  };
+  for (let p = 0; p < width * height; p++) {
+    if (data[p * 4 + 3] >= CONFIG.ALPHA_OPAQUE_MIN) continue;
+    const x = p % width, y = (p - x) / width, L = lab[p * 3];
+    if (x > 0) start(p - 1, L);
+    if (x < width - 1) start(p + 1, L);
+    if (y > 0) start(p - width, L);
+    if (y < height - 1) start(p + width, L);
+  }
+  return starts;
+}
+
+/**
  * Removes shadows lying on the background (gray ellipses under characters).
  * A shadow is desaturated (low Lab chroma) and close to the background in
  * lightness. The search spreads from already removed background, so shadows
  * inside the object (cloth folds) are untouched. Background lightness comes
  * from the transparent pixel the wave started at and is not updated, or the
- * wave would creep along smooth darkening. O(pixels) time and memory.
+ * wave would creep along smooth darkening. O(pixels × boundary lightnesses)
+ * worst-case time, O(pixels) memory. Equal background lightnesses share a wave.
  * @param {ImageData} image with background already removed
  * @param {{tolerance: number, maxChroma: number}} options tolerance is ΔL to the background
  * @returns {ImageData} the input object if tolerance <= 0
@@ -2533,52 +2564,38 @@ function removeShadows(image, { tolerance, maxChroma }) {
   const lab = imageToLab(image);
   const maxChromaSq = maxChroma * maxChroma;
   const minA = CONFIG.ALPHA_OPAQUE_MIN;
-  const isQueued = new Uint8Array(width * height);
   const stack = new Int32Array(width * height);
-  /** Background lightness the wave came from, per stacked pixel */
-  const stackL = new Float32Array(width * height);
-  let top = 0;
-
-  /**
-   * @param {number} q candidate neighbor
-   * @param {number} bgL background lightness
-   */
-  const push = (q, bgL) => {
-    if (isQueued[q] || dst[q * 4 + 3] < minA) return;
-    isQueued[q] = 1;
-    stack[top] = q;
-    stackL[top] = bgL;
-    top++;
-  };
-
-  // Start: opaque neighbors of transparent pixels
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const p = y * width + x;
-      if (dst[p * 4 + 3] >= minA) continue;
-      const bgL = lab[p * 3];
-      if (x > 0) push(p - 1, bgL);
-      if (x < width - 1) push(p + 1, bgL);
-      if (y > 0) push(p - width, bgL);
-      if (y < height - 1) push(p + width, bgL);
+  const neutral = new Uint8Array(width * height);
+  for (let q = 0; q < neutral.length; q++) {
+    const o = q * 3;
+    if (image.data[q * 4 + 3] >= minA && lab[o + 1] ** 2 + lab[o + 2] ** 2 <= maxChromaSq) {
+      neutral[q] = 1;
     }
   }
-
-  while (top > 0) {
-    top--;
-    const p = stack[top];
-    const bgL = stackL[top];
-    const o = p * 3;
-    const a = lab[o + 1];
-    const b = lab[o + 2];
-    if (a * a + b * b > maxChromaSq || Math.abs(lab[o] - bgL) > tolerance) continue;
-    dst[p * 4 + 3] = 0;
-    const x = p % width;
-    const y = (p - x) / width;
-    if (x > 0) push(p - 1, bgL);
-    if (x < width - 1) push(p + 1, bgL);
-    if (y > 0) push(p - width, bgL);
-    if (y < height - 1) push(p + width, bgL);
+  const starts = shadowBoundarySeeds(image, lab, neutral, tolerance);
+  if (starts.size === 0) return out;
+  const visited = new Uint32Array(neutral.length);
+  let mark = 0;
+  for (const [L, seeds] of starts) {
+    mark++;
+    let top = 0;
+    /** @param {number} q */
+    const push = (q) => {
+      if (visited[q] === mark || !neutral[q] || Math.abs(lab[q * 3] - L) > tolerance) return;
+      visited[q] = mark;
+      stack[top++] = q;
+    };
+    seeds.forEach(push);
+    while (top > 0) {
+      const p = stack[--top];
+      dst[p * 4 + 3] = 0;
+      const x = p % width, y = (p - x) / width;
+      // Traverse the source mask: a previous wave must not block this origin.
+      if (x > 0) push(p - 1);
+      if (x < width - 1) push(p + 1);
+      if (y > 0) push(p - width);
+      if (y < height - 1) push(p + width);
+    }
   }
   return out;
 }

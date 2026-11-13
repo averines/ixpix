@@ -15,6 +15,7 @@ All notable changes to ixpix are listed here. The format follows
 - Support arrow navigation in segmented controls and keyboard activation of Help.
 - Use every background seed and repaint the refined grid when sharpening changes.
 - Keep the optional touch icon exclusive to the online version.
+- Remove shadows from every matching background origin, independently of traversal order.
 
 ## [1.0.0] - 2026-09-26
 
