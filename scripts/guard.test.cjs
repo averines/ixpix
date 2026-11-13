@@ -15,6 +15,11 @@ const cases = [
   [false, '<style>@import "local.css";</style>'],
   [false, '<script>new Worker("worker.js");</script>'],
   [false, '<script>import("module.js");</script>'],
+  [false, '<script>const text = `${fetch("settings.json")}`;</script>'],
+  [false, '<script>const text = `${new Worker("worker.js")}`;</script>'],
+  [false, '<script>const text = `${import("module.js")}`;</script>'],
+  [false, '<script>const text = `outer ${`inner ${fetch("settings.json")}`}`;</script>'],
+  [false, '<script>const text = `${({run: () => fetch("settings.json")}).run()}`;</script>'],
   [true, '<link rel="canonical" href="https://example.invalid/">'],
   [true, '<link rel="icon" href="data:image/svg+xml,<svg></svg>">'],
   [true, '<style>@import "data:text/css,body{}";</style>'],
@@ -22,6 +27,10 @@ const cases = [
   [true, '<script>new Worker(URL.createObjectURL(new Blob(["worker"])));</script>'],
   [true, '<!-- <script src="example.js"></script> -->'],
   [true, '<script>// fetch("local");\nconst text = "fetch(\'local\')";</script>'],
+  [true, '<script>const text = `fetch("local")`;</script>'],
+  [true, '<script>const text = `${"fetch(\'local\')"}`;</script>'],
+  [true, '<script>const text = `${fetch("data:text/plain,ok")}`;</script>'],
+  [true, '<script>const pattern = /["\x27]/; const text = `ok`;</script>'],
 ];
 try {
   for (const [allowed, html] of cases) {
@@ -32,5 +41,7 @@ try {
   }
   console.log(`GUARD: ${cases.length} passed, 0 failed`);
 } finally {
+  assert.equal(path.dirname(path.resolve(temp)), path.resolve(os.tmpdir()));
+  assert(path.basename(temp).startsWith('ixpix-guard-'));
   fs.rmSync(temp, { recursive: true, force: true });
 }

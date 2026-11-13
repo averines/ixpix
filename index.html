@@ -2417,17 +2417,12 @@ function floodFillBackground(image, { seeds, tolerance }) {
   // Index of the fill that visited a pixel: a pixel rejected by one point may suit another
   const visited = new Uint16Array(width * height);
   const stack = new Int32Array(width * height);
-  const filledColors = new Set();
 
   seeds.forEach((seed, s) => {
     const sx = Math.floor(seed.x);
     const sy = Math.floor(seed.y);
     if (sx < 0 || sy < 0 || sx >= width || sy >= height) return;
-    const seedIndex = (sy * width + sx) * 4;
-    const color = (src[seedIndex] << 16) | (src[seedIndex + 1] << 8) | src[seedIndex + 2];
-    // Only an identical key has the same tolerance region; nearby colors may reach more background.
-    if (dst[seedIndex + 3] === 0 && src[seedIndex + 3] !== 0 && filledColors.has(color)) return;
-    filledColors.add(color);
+    // A removed seed can still reach new pixels with its own key or in another component.
     const mark = (s % 0xffff) + 1;
     const so = (sy * width + sx) * 3;
     const kL = lab[so];
@@ -5723,6 +5718,7 @@ function recompute() {
     syncPatternColors();
     setMaskSource(outputs[CONFIG.MASK_STAGE]);
     showResult(image);
+    sourceViewer.renderOverlay();
     showPipelineTime(performance.now() - t0, recomputed, timings);
   } catch (err) {
     showMessage(`Processing error: ${err instanceof Error ? err.message : err}`, true);

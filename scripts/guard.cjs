@@ -19,8 +19,75 @@ function attribute(tag, name) {
 const embedded = (url) => /^(?:data:|blob:|#)/i.test(url.trim());
 // Preserve positions while ignoring comments and quoted text in executable code.
 function codeOnly(text) {
-  return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`/g,
-    (value) => value.replace(/[^\r\n]/g, ' '));
+  const out = text.split('');
+  let pos = 0;
+  function erase(from, to) {
+    for (let i = from; i < to; i++) if (out[i] !== '\r' && out[i] !== '\n') out[i] = ' ';
+  }
+  function quoted(quote) {
+    erase(pos, ++pos);
+    while (pos < text.length) {
+      const start = pos;
+      if (text[pos] === '\\') {
+        pos = Math.min(text.length, pos + 2);
+      } else if (text[pos] === quote) {
+        erase(pos, ++pos);
+        return;
+      } else if (quote === '`' && text.startsWith('${', pos)) {
+        erase(pos, pos + 2);
+        pos += 2;
+        scan(true);
+        continue;
+      } else pos++;
+      erase(start, pos);
+    }
+  }
+  function scan(inExpression) {
+    let depth = 0;
+    let canStartRegex = true;
+    while (pos < text.length) {
+      const start = pos;
+      const ch = text[pos];
+      if (/\s/.test(ch)) { pos++; continue; }
+      if (text.startsWith('//', pos)) {
+        while (pos < text.length && text[pos] !== '\n') pos++;
+        erase(start, pos);
+      } else if (text.startsWith('/*', pos)) {
+        const end = text.indexOf('*/', pos + 2);
+        pos = end < 0 ? text.length : end + 2;
+        erase(start, pos);
+      } else if (ch === '"' || ch === "'" || ch === '`') {
+        quoted(ch);
+        canStartRegex = false;
+      } else if (ch === '/' && canStartRegex) {
+        pos++;
+        let inClass = false;
+        while (pos < text.length) {
+          const c = text[pos++];
+          if (c === '\\') pos++;
+          else if (c === '[') inClass = true;
+          else if (c === ']') inClass = false;
+          else if (c === '/' && !inClass) break;
+        }
+        while (pos < text.length && /[a-z]/i.test(text[pos])) pos++;
+        erase(start, pos);
+        canStartRegex = false;
+      } else if (/[\w$]/.test(ch)) {
+        while (pos < text.length && /[\w$]/.test(text[pos])) pos++;
+        canStartRegex = /^(return|throw|case|yield|await|void|typeof|delete|in|of)$/.test(text.slice(start, pos));
+      } else if (ch === '}' && inExpression && depth === 0) {
+        erase(pos, ++pos);
+        return;
+      } else {
+        if (ch === '{') depth++;
+        if (ch === '}') depth--;
+        canStartRegex = ![')', ']', '}', '.'].includes(ch);
+        pos++;
+      }
+    }
+  }
+  scan(false);
+  return out.join('');
 }
 
 const html = source.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\r\n]/g, ' '));

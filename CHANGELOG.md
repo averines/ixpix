@@ -13,7 +13,7 @@ All notable changes to ixpix are listed here. The format follows
 - Enforce export size limits for keyboard shortcuts and keep filenames tied to the exported image.
 - Keep preset storage failures visible without reporting an unsuccessful write as saved.
 - Support arrow navigation in segmented controls and keyboard activation of Help.
-- Use every distinct background seed color and display the same refined grid used for processing.
+- Use every background seed and repaint the refined grid when sharpening changes.
 - Keep the optional touch icon exclusive to the online version.
 
 ## [1.0.0] - 2026-09-26

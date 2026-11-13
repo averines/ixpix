@@ -2797,6 +2797,16 @@ test('floodFillBackground: a removed seed still contributes its own background c
   assertEqual([...forward.data], [...reverse.data], 'seed order does not change the mask');
 });
 
+test('floodFillBackground: identical keys in separate regions both contribute', () => {
+  const image = new ImageData(7, 1);
+  [245, 0, 245, 225, 235, 245, 255].forEach((v, i) => image.data.set([v, v, v, 255], i * 4));
+  const seeds = [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 }];
+  const forward = floodFillBackground(image, { seeds, tolerance: 5 });
+  const reverse = floodFillBackground(image, { seeds: [...seeds].reverse(), tolerance: 5 });
+  assertEqual(forward.data[6 * 4 + 3], 0, 'the final seed reaches the white region');
+  assertEqual([...forward.data], [...reverse.data]);
+});
+
 test('UI: refined grid overlay follows the sharpened processing grid', () => withTestUI(() => {
   const image = boxBlur(renderPseudoPixelArt(makeSyntheticArt({ width: 16, height: 16 }), { cellW: 3.4 }), 1);
   Object.assign(state.params, { cellW: 3.4, cellH: 3.4, isGridRefined: true, edgeEnhance: 1 });
@@ -2825,6 +2835,28 @@ test('UI: refined grid overlay follows the sharpened processing grid', () => wit
     sourceViewer.zoom = zoom;
     sourceViewer.panX = panX;
     sourceViewer.panY = panY;
+  }
+}));
+
+test('UI: changing sharpening repaints the refined grid without moving the viewer', () => withTestUI(() => {
+  const image = boxBlur(renderPseudoPixelArt(makeSyntheticArt({ width: 16, height: 16 }), { cellW: 3.4 }), 1);
+  Object.assign(state.params, { cellW: 3.4, cellH: 3.4, isGridRefined: true });
+  const viewport = sourceViewer.viewport;
+  Object.defineProperty(viewport, 'clientWidth', { value: 600, configurable: true });
+  Object.defineProperty(viewport, 'clientHeight', { value: 600, configurable: true });
+  try {
+    setSource(image, 'grid.png');
+    sourceViewer.overlay.width = sourceViewer.overlay.height = 600;
+    sourceViewer.zoom = 4;
+    sourceViewer.panX = sourceViewer.panY = 0;
+    sourceViewer.renderOverlay();
+    const before = sourceViewer.overlay.toDataURL();
+    setParams({ edgeEnhance: 1 });
+    recompute();
+    assert(sourceViewer.overlay.toDataURL() !== before, 'new grid is visible immediately');
+  } finally {
+    Reflect.deleteProperty(viewport, 'clientWidth');
+    Reflect.deleteProperty(viewport, 'clientHeight');
   }
 }));
 
