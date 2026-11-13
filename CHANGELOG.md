@@ -4,18 +4,17 @@ All notable changes to ixpix are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] - 2026-11-13
 
 ### Fixed
 
-- Reset sprite exclusions and grid offsets when opening a different image.
-- Ignore image loads superseded by another selection or closing the image.
-- Enforce export size limits for keyboard shortcuts and keep filenames tied to the exported image.
-- Keep preset storage failures visible without reporting an unsuccessful write as saved.
-- Support arrow navigation in segmented controls and keyboard activation of Help.
-- Use every background seed and repaint the refined grid when sharpening changes.
-- Keep the optional touch icon exclusive to the online version.
-- Remove shadows from every matching background origin, independently of traversal order.
+- Correct background and shadow removal and refined grid previews.
+- Reset image-specific settings and ignore outdated image loads.
+- Enforce export size limits and preserve correct filenames.
+- Handle invalid saved settings and preset storage failures.
+- Fix keyboard navigation and offline startup.
+
+Shadow removal may take longer on complex backgrounds.
 
 ## [1.0.0] - 2026-09-26
 
